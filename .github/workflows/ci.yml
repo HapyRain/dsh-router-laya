@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: plugin tests (arm parsing + auto state machine)
+        run: |
+          node parseArm.test.mjs
+          node auto.test.mjs
+      - name: fetch.mjs dry-run (release-first source chain)
+        run: node weights/fetch.mjs --dry-run
+      - name: python syntax (vendored service)
+        run: python -m compileall -q service
+      - name: charts reproducible
+        run: |
+          python scripts/make_charts.py
+          git diff --exit-code docs/charts || (echo "charts are stale -- run scripts/make_charts.py" && exit 1)

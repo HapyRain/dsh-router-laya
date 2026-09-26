@@ -1,0 +1,19 @@
+dsh-router-laya
+Copyright 2026 the dsh-router-laya authors
+
+This product includes software developed as part of the dsh-router-laya project
+and its development repository HapyRain/layaDemo, licensed under the Apache License, Version 2.0.
+
+This product vendored and redistributes, in unmodified form, portions of the following
+third-party projects, both licensed under the Apache License, Version 2.0:
+
+  * convaiinnovations/laya -- https://huggingface.co/convaiinnovations/laya
+      Vendored as service/laya/ (package source, laya 0.3.7, carrying the 7-question routing
+      protocol this plugin's finetuned checkpoint was trained for).
+
+  * answerdotai/ModernBERT-large -- https://huggingface.co/answerdotai/ModernBERT-large
+      The encoder backbone of the fine-tuned judge checkpoint (laya-router-7q) that
+      weights/fetch.mjs downloads; its weights are embedded in model.safetensors.
+
+The fine-tuned checkpoint itself (laya-router-7q) is a derivative work of the two projects
+above and is likewise distributed under the Apache License, Version 2.0.

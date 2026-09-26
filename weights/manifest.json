@@ -1,0 +1,36 @@
+{
+  "name": "laya-router-7q",
+  "description": "dsh-router-laya judge checkpoint (7-question fine-tune of convaiinnovations/laya over answerdotai/ModernBERT-large). Hashes computed from training/laya_router_finetuned in the source repository.",
+  "repo": "HapyRain/laya-router-7q",
+  "revision": "main",
+  "release_base": "https://github.com/HapyRain/dsh-router-laya/releases/download/v2.1.0",
+  "license": "Apache-2.0",
+  "totalBytes": 846228407,
+  "files": [
+    {
+      "path": "model.safetensors",
+      "bytes": 842609220,
+      "sha256": "f14cf869ebc4d0adab3102627a92f0b677678d05e5353e3e55dc11f4fc6172de"
+    },
+    {
+      "path": "encoder/config.json",
+      "bytes": 2168,
+      "sha256": "eab8648c4b538efc2cb0c07ebef30b92de0dc596d0dc1818e202006958776289"
+    },
+    {
+      "path": "rl_agent_config.json",
+      "bytes": 811,
+      "sha256": "b6b5be8c3ebf051fc0b400f120d9f75dd4015f8488efd132e431da3f55c62d7d"
+    },
+    {
+      "path": "tokenizer/tokenizer.json",
+      "bytes": 3583228,
+      "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+    },
+    {
+      "path": "tokenizer/tokenizer_config.json",
+      "bytes": 350,
+      "sha256": "e07bcb74963b20b1193332afd3541b36dea30db1e4183d4002d739d5a4dfd5d2"
+    }
+  ]
+}

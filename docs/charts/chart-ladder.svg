@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="244" viewBox="0 0 760 244" font-family="Segoe UI,Helvetica,Arial,sans-serif"><rect x="0" y="0" width="760" height="244" rx="10" fill="#ffffff" stroke="#d0d7de"/><text x="24" y="38" font-size="17" font-weight="600" fill="#24292f">实测升级阶梯 —— 真实会话连续三轮（同一任务重试）</text>
+<text x="198" y="81" font-size="12.5" fill="#24292f" text-anchor="end">第 1 轮 · 新任务 → low</text>
+<rect x="210" y="66" width="153.3" height="22" rx="4" fill="#3fb950"/>
+<text x="371" y="81" font-size="12.5" font-weight="600" fill="#3fb950">1</text>
+<text x="198" y="121" font-size="12.5" fill="#24292f" text-anchor="end">第 2 轮 · 重试 → high</text>
+<rect x="210" y="106" width="306.7" height="22" rx="4" fill="#d29922"/>
+<text x="525" y="121" font-size="12.5" font-weight="600" fill="#d29922">2</text>
+<text x="198" y="161" font-size="12.5" fill="#24292f" text-anchor="end">第 3 轮 · 再重试 → max</text>
+<rect x="210" y="146" width="460.0" height="22" rx="4" fill="#f85149"/>
+<text x="678" y="161" font-size="12.5" font-weight="600" fill="#f85149">3</text>
+<text x="24" y="228" font-size="11.5" fill="#57606a">live 日志：laya → laya → escalate_regenerate；第 4 轮用户指定 max（intent_force）</text>
+</svg>

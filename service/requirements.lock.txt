@@ -1,0 +1,27 @@
+# dsh-router-laya :: pinned Python dependencies for the vendored judge service (service/).
+#
+#   pip install -r service/requirements.lock.txt
+#
+# torch is pinned to the CPU wheel (`2.14.0+cpu`). That local-version wheel is NOT on PyPI -- it
+# only exists on PyTorch's own CPU index, so this file pulls it in via --extra-index-url (NOT
+# --index-url, which would replace PyPI and break every other line below):
+#
+#   --extra-index-url https://download.pytorch.org/whl/cpu
+#
+# GPU users: swap the torch line for a CUDA build instead of the +cpu pin -- e.g. the cu124 wheel
+# from https://download.pytorch.org/whl/cu124 (or the plain PyPI `torch==2.14.0`, which bundles a
+# CUDA runtime). The service picks its device automatically at startup (cuda > mps > cpu), so no
+# other change is needed; set LAYA_DEVICE to force one.
+#
+# The `laya` package itself is deliberately NOT listed here: a vendored copy (laya 0.3.7, carrying
+# the 7-question routing protocol this plugin's finetuned checkpoint was trained for) ships next
+# to this file under service/laya/ and is what the service imports. Installing the PyPI `laya`
+# into the same environment would shadow or diverge from it -- do not add it.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0+cpu
+transformers==5.17.0
+safetensors==0.8.0
+huggingface_hub==1.32.0
+numpy>=2.0,<3
+PyYAML>=6.0,<7

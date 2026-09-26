@@ -1,0 +1,49 @@
+{
+  "name": "dsh-router-laya",
+  "version": "2.1.0",
+  "description": "Per-request tier routing on the Laya judge, plus an Auto tier chip in the composer",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HapyRain/dsh-router-laya.git",
+    "directory": "routing/plugin/dsh-router-laya"
+  },
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "dsh-router-laya": "bin/setup.mjs"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "install.mjs",
+    "bin",
+    "service",
+    "!**/__pycache__",
+    "!**/*.pyc",
+    "weights/fetch.mjs",
+    "weights/manifest.json",
+    "README.md",
+    "NOTICE",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=18",
+    "dsh": ">=0.1.0-rc.6"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

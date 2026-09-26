@@ -1,0 +1,9 @@
+# dsh bundle patch: inserts this plugin's row into a profile's layer stack.
+#
+# NOTE for the current dev install: the web profile's own cordis.patch.yml already inserts a row with
+# this id (`router-laya`), because that is how the plugin was mounted before this package existed. Do NOT
+# list this package in `dsh.profile.bundles` while that hand-written row is still there -- Cordis refuses
+# a tree with a duplicate loader entry id, and the profile would not boot.
+- insert:
+    - id: router-laya
+      name: 'dsh-router-laya'
