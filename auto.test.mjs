@@ -3,7 +3,9 @@
 // Python service. Plain-script check, repo convention (see parseArm.test.mjs).
 //
 //     node routing/plugin/dsh-router-laya/auto.test.mjs
-import { isOurRoute, nextSessionState, resolveSchedule, serviceBaseUrl, serviceLaunchSpec, TIER_TABLE } from './index.js';
+import { Config, isOurRoute, MODE_NS, nextSessionState, resolveModeEntryId, resolveSchedule,
+  serviceBaseUrl, serviceLaunchSpec, TIER_TABLE } from './index.js';
+import { isVolatile } from '@deepseek-ai/cosmokit';
 
 let pass = 0;
 const fail = [];
@@ -124,6 +126,33 @@ check('explicit config pointing at nothing -> null, never a spawn',
   null);
 check('venv absent in a checkout -> null rather than bare python',
   serviceLaunchSpec({}, {}, HERE, has('/repo/training/laya_router_finetuned'), 'linux'), null);
+
+// ── mode entry id + volatile Config (write-path prerequisites) ────────────────────────────────
+check('entry id: bundle insert',
+  resolveModeEntryId([{ options: { id: 'include:router-laya', name: 'dsh-router-laya' } }]),
+  'include:router-laya');
+check('entry id: hand-patched row',
+  resolveModeEntryId([{ options: { id: 'router-laya', name: 'dsh-router-laya' } }]),
+  'router-laya');
+check('entry id: empty -> fallback',
+  resolveModeEntryId([], MODE_NS), MODE_NS);
+check('entry id: other plugin ignored',
+  resolveModeEntryId([
+    { options: { id: 'include:other', name: 'dsh-other' } },
+    { options: { id: 'include:router-laya', name: 'dsh-router-laya' } },
+  ]), 'include:router-laya');
+check('entry id: null entry ignored',
+  resolveModeEntryId([null, undefined, { options: { name: 'dsh-router-laya' } }], 'fb'), 'fb');
+
+// `mode` must stay volatile or settings.update refuses a non-volatile path (and the chip 503s).
+// cosmokit's isVolatile tests resolved *references*, so assert both the schema meta and the ref
+// that Config() materialises for mode.
+check('Config.mode schema meta is volatile', Config.dict.mode.meta.volatile === true, true);
+check('Config.mode resolves to a volatile ref', isVolatile(Config({}).mode), true);
+check('Config.auto is not volatile', Config.dict.auto.meta.volatile === undefined, true);
+check('Config keeps ordinary row fields',
+  ['auto', 'judge', 'routes', 'tiers', 'global', 'servicePython', 'serviceScript', 'autoStart']
+    .every((key) => Object.hasOwn(Config.dict, key)), true);
 
 // ── report ───────────────────────────────────────────────────────────────────────────────────
 console.log('='.repeat(70));

@@ -29,16 +29,18 @@
 export const name = 'router-laya';
 
 // No `llm` inject needed: the judge calls a local Laya HTTP router instead of an LLM service.
-// A lazy import path keeps the file loadable by `file:///` URL from a checkout with no node_modules.
 export const inject = [];
 
-// Node builtins only, so the `file:///` row from a checkout still resolves (see `inject`). These are
-// for the judge service's auto-start (see SERVICE_* below), not for routing.
+// Node builtins only. These are for the judge service's auto-start (see SERVICE_* below), not for
+// routing. `@deepseek-ai/schemastery` is a peer the profile provides: bare it only resolves once the
+// package sits under a `node_modules` that reaches the harness (see install.mjs) -- a checkout needs
+// its own `node_modules/@deepseek-ai/schemastery` (gitignored) or a copy-install.
 import { closeSync, existsSync as fsExists, openSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname as pathDirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import z from '@deepseek-ai/schemastery';
 
 /** This file's directory -- the starting point for the dev-checkout search in `serviceLaunchSpec`. */
 const hereDir = pathDirname(fileURLToPath(import.meta.url));
@@ -105,20 +107,98 @@ export const MODE_NS = 'router-laya';
 export const MODES = ['manual', 'auto'];
 
 /**
+ * Config schema. `mode` is volatile so `settings.update` can flip it without remounting the row
+ * (same pattern as dsh-agent-default-model's provider/model). Everything else is the row's ordinary
+ * config -- undeclared fields would be stripped once a schema exists, so all of them stay here.
+ */
+export const Config = z.object({
+  mode: z.union(MODES).default('auto').volatile(),
+  auto: z.boolean(),
+  judge: z.boolean(),
+  routes: z.any(),
+  tiers: z.any(),
+  global: z.boolean(),
+  servicePython: z.string(),
+  serviceScript: z.string(),
+  autoStart: z.boolean(),
+});
+
+/**
+ * The loader entry id that owns this plugin's Config. It is not stable across install paths:
+ * a hand-patched row uses `router-laya`, while a bundle insert uses `include:router-laya`, and
+ * `settings.update` addresses entries by that id (not by package name). Empty input falls back
+ * so callers can still attempt a write and surface a precise 503.
+ */
+export function resolveModeEntryId(entries, fallback = MODE_NS) {
+  for (const entry of entries ?? []) {
+    const options = entry !== undefined && entry !== null ? entry.options : undefined;
+    if (options !== undefined && options !== null && options.name === 'dsh-router-laya'
+      && typeof options.id === 'string' && options.id !== '') return options.id;
+  }
+  return fallback;
+}
+
+/** Loader entries for the running row, or []. Never throws -- read paths stay fail-safe. */
+function loaderEntries(ctx) {
+  try {
+    const loader = ctx !== undefined && ctx !== null ? ctx.loader : undefined;
+    if (loader !== undefined && loader !== null && typeof loader.entries === 'function') {
+      return [...loader.entries()];
+    }
+  } catch { /* fall through */ }
+  return [];
+}
+
+/**
  * The mode in force for the next request: the settings value when available, else the mount-time
  * fallback. Never throws -- a settings plane that rejects the read must not take routing down with it
  * (the same fail-safe posture as every other path in this file).
+ *
+ * Two settings APIs exist in the wild and both are read: SettingsForms (dsh >= 0.1.7) exposes
+ * `describe()` only; the older SettingsProvider exposes `get(ns)` (and `installSection`). Live value
+ * is required because a volatile update does not remount, so the `config` object apply() received
+ * goes stale after the first flip.
  */
 export function currentMode(ctx, fallback) {
   try {
     const settings = ctx !== undefined && ctx !== null ? ctx.get('settings') : undefined;
     if (settings === undefined || settings === null) return fallback;
-    if (typeof settings.get !== 'function') return fallback;
-    const section = settings.get(MODE_NS);
-    const mode = section !== undefined && section !== null ? section.mode : undefined;
-    return MODES.includes(mode) ? mode : fallback;
+    const ns = resolveModeEntryId(loaderEntries(ctx), MODE_NS);
+    if (typeof settings.describe === 'function') {
+      const row = settings.describe().find((candidate) => candidate !== undefined && candidate.ns === ns);
+      const mode = row !== undefined && row !== null && row.value !== undefined && row.value !== null
+        ? row.value.mode : undefined;
+      if (MODES.includes(mode)) return mode;
+    }
+    if (typeof settings.get === 'function') {
+      for (const id of ns === MODE_NS ? [ns] : [ns, MODE_NS]) {
+        const section = settings.get(id);
+        const mode = section !== undefined && section !== null ? section.mode : undefined;
+        if (MODES.includes(mode)) return mode;
+      }
+      return fallback;
+    }
+    return fallback;
   } catch {
     return fallback;
+  }
+}
+
+/** Whether a volatile mode write can succeed right now (entry + Config schema present). */
+function modeWritable(ctx) {
+  try {
+    const settings = ctx !== undefined && ctx !== null ? ctx.get('settings') : undefined;
+    if (settings === undefined || settings === null) return false;
+    if (typeof settings.update !== 'function') return false;
+    const entries = loaderEntries(ctx);
+    if (resolveModeEntryId(entries, null) === null) return false;
+    if (typeof settings.describe === 'function') {
+      const ns = resolveModeEntryId(entries, MODE_NS);
+      return settings.describe().some((row) => row !== undefined && row.ns === ns);
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -138,13 +218,19 @@ async function installModeSetting(ctx, fallback, sink) {
     const settings = ctx.get('settings');
     if (settings === undefined || settings === null) return null;
     if (typeof settings.installSection !== 'function') return null;
-    const z = (await import('@deepseek-ai/schemastery')).default;
     const schema = z.object({
       mode: z.union(MODES).default(fallback),
     });
     settings.installSection(ctx, MODE_NS, schema, { mode: fallback }, {
-      setSource: (source) => { sink.mode = source; },
-      onChange: () => {},
+      setSource: (source) => {
+        try {
+          const value = typeof source === 'function' ? source() : source;
+          if (value !== undefined && value !== null && MODES.includes(value.mode)) sink.mode = value.mode;
+        } catch { /* keep mount-time sink */ }
+      },
+      onChange: (section) => {
+        if (section !== undefined && section !== null && MODES.includes(section.mode)) sink.mode = section.mode;
+      },
     });
     return settings;
   } catch (error) {
@@ -187,7 +273,7 @@ function installModeRoute(ctx, sink) {
         res.end(text);
       };
       if (req.method === 'GET') {
-        send(200, { mode: currentMode(ctx, sink.mode) });
+        send(200, { mode: currentMode(ctx, sink.mode), writable: modeWritable(ctx) });
         return;
       }
       if (req.method !== 'POST') {
@@ -202,20 +288,31 @@ function installModeRoute(ctx, sink) {
           try {
             wanted = JSON.parse(raw).mode;
           } catch {
-            send(400, { error: 'body must be json' });
+            send(400, { error: 'body must be json', writable: modeWritable(ctx) });
             return;
           }
           if (!MODES.includes(wanted)) {
-            send(400, { error: `mode must be one of ${MODES.join('|')}` });
+            send(400, { error: `mode must be one of ${MODES.join('|')}`, writable: modeWritable(ctx) });
             return;
           }
           const settings = ctx.get('settings');
-          if (settings === undefined || settings === null) {
-            send(503, { error: 'settings unavailable' });
+          if (settings === undefined || settings === null || typeof settings.update !== 'function') {
+            send(503, { error: 'settings unavailable', writable: false });
             return;
           }
-          await settings.update(MODE_NS, { mode: wanted });
-          send(200, { mode: currentMode(ctx, sink.mode) });
+          const ns = resolveModeEntryId(loaderEntries(ctx), MODE_NS);
+          try {
+            await settings.update(ns, { mode: wanted });
+          } catch (error) {
+            // Wrong entry id, missing Config schema, or a non-volatile field: all mean the write
+            // cannot land, so answer 503 with the reason instead of a bare 500 the chip ignores.
+            const message = String(error && error.message ? error.message : error);
+            send(503, { error: message, writable: false });
+            return;
+          }
+          // Volatile updates do not remount: keep the mount-time sink in sync for the fallback read.
+          sink.mode = wanted;
+          send(200, { mode: currentMode(ctx, wanted), writable: modeWritable(ctx) });
         }).catch((error) => {
           send(500, { error: String(error && error.message ? error.message : error) });
         });

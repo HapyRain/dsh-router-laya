@@ -38,6 +38,13 @@
     "node": ">=18",
     "dsh": ">=0.1.0-rc.6"
   },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "~3.18.4"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cosmokit": "~1.8.5",
+    "@deepseek-ai/schemastery": "~3.18.4"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
