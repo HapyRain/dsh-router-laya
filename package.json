@@ -1,6 +1,6 @@
 {
   "name": "dsh-router-laya",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Per-request tier routing on the Laya judge, plus an Auto tier chip in the composer",
   "license": "Apache-2.0",
   "repository": {
