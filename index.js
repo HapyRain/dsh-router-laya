@@ -751,8 +751,17 @@ export async function ensureJudgeService(cfg, env = process.env) {
     logFd = undefined; // an unwritable temp dir must not stop the start attempt
   }
   try {
-    const child = spawn(spec.python, [spec.script, '--http', '--port', String(new URL(base).port || 80)], {
+    // Prefer pythonw.exe on Windows: python.exe is console-subsystem and will attach/create a
+    // console even when Node asks for windowsHide. pythonw is windowed -- no black box at all.
+    let python = spec.python;
+    if (process.platform === 'win32') {
+      const pythonw = python.replace(/python(\.exe)?$/i, 'pythonw.exe');
+      if (pythonw !== python && fsExists(pythonw)) python = pythonw;
+    }
+    const child = spawn(python, [spec.script, '--http', '--port', String(new URL(base).port || 80)], {
       detached: true,
+      // Windows: detached wants a new console; without hide the empty black window sits forever.
+      windowsHide: true,
       stdio: ['ignore', 'ignore', logFd === undefined ? 'ignore' : logFd],
       env: { ...env, PYTHONIOENCODING: 'utf-8' },
     });
