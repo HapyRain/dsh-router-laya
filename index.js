@@ -682,8 +682,10 @@ export function serviceLaunchSpec(cfg, env, here, exists, platform) {
   if (script !== undefined && python !== undefined) {
     return exists(script) && exists(python) ? { python, script } : null;
   }
-  // Dev checkout: this file sits at <repo>/routing/plugin/dsh-router-laya/index.js. The checkpoint
-  // under <repo>/training is the marker -- a packaged install does not ship it here.
+  // Dev checkout: in the laya monorepo this file sits at <repo>/routing/plugin/dsh-router-laya/index.js,
+  // so two `up` steps reach the checkout that holds `training/`. This package repo is the package
+  // itself and has no such layout, so the walk finds nothing -- a packaged install configures
+  // servicePython/serviceScript instead.
   let dir = here;
   for (let depth = 0; depth < 6 && dir !== undefined; depth++) {
     const repo = dir;

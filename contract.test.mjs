@@ -2,8 +2,7 @@
 // asserts the tier/triggered_by contract for the plan §5 message classes, including the
 // prev_tier/prev_task-carrying requests v2 adds (deepseek review F9).
 //
-//     node routing/plugin/dsh-router-laya/contract.test.mjs   (service must be up; see
-//                                                              routing/start_router.ps1)
+//     node contract.test.mjs   (the judge service must be up; see service/start_router.ps1)
 const URL = process.env.LAYA_ROUTER_URL || 'http://127.0.0.1:8765/judge';
 
 let pass = 0;

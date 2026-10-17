@@ -1,7 +1,7 @@
 // Arm parsing is the one piece of real logic in the router plugin, and a typo in an arm name would
 // silently mislabel a whole run -- so it gets the repo's usual plain-script check, no framework.
 //
-//     node routing/plugin/dsh-router-laya/parseArm.test.mjs
+//     node parseArm.test.mjs
 import { applyRoute, carriesExplicitRoute, parseArm, parseSchedule, resolveSchedule, routeForLevel, ROUTE_TABLE, usableRoute } from './index.js';
 
 let pass = 0;

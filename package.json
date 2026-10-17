@@ -5,8 +5,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/HapyRain/dsh-router-laya.git",
-    "directory": "routing/plugin/dsh-router-laya"
+    "url": "git+https://github.com/HapyRain/dsh-router-laya.git"
   },
   "type": "module",
   "main": "index.js",

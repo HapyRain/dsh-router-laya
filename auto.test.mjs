@@ -2,7 +2,7 @@
 // state machine -- everything that decides where a request lands, without needing DSH or the
 // Python service. Plain-script check, repo convention (see parseArm.test.mjs).
 //
-//     node routing/plugin/dsh-router-laya/auto.test.mjs
+//     node auto.test.mjs
 import { Config, isOurRoute, MODE_NS, mountMode, nextSessionState, resolveModeEntryId, resolveSchedule,
   serviceBaseUrl, serviceLaunchSpec, TIER_TABLE } from './index.js';
 import { isVolatile } from '@deepseek-ai/cosmokit';
@@ -95,7 +95,9 @@ check('ours: model mismatch (delegation to another model)',
 // filesystem is touched. The point of these cases is that a WRONG guess is worse than no guess --
 // spawning a missing python would log a lie, so every unresolved shape must return null.
 const has = (...paths) => (p) => paths.includes(p);
-const REPO = '/repo';
+// Simulates the laya MONOREPO layout this discovery was written for: the plugin sits two levels
+// below the checkout that holds `training/` and `.venv/`. This package repo has no such layout
+// (it is the package itself), which is why a packaged install configures servicePython/serviceScript.
 const HERE = '/repo/routing/plugin/dsh-router-laya';
 
 check('service url: strips /judge',

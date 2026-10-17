@@ -8,7 +8,7 @@
  * to exist under a `node_modules` that reaches the harness. That is why the pilot could load the arm
  * selector by URL but the judge cannot.
  *
- *     node routing/plugin/dsh-router-laya/install.mjs <module-root>
+ *     node install.mjs <module-root>
  *
  * Copies (never links), so the two installs -- the isolated harness profile and the real profile --
  * stay independent and either can be deleted without touching the other or this checkout.
@@ -24,7 +24,7 @@ const PACKAGE = 'dsh-router-laya';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const target = process.argv[2];
 if (!target) {
-  console.error('usage: node routing/plugin/dsh-router-laya/install.mjs <module-root>');
+  console.error('usage: node install.mjs <module-root>');
   process.exit(2);
 }
 
