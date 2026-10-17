@@ -107,6 +107,21 @@ export const MODE_NS = 'router-laya';
 export const MODES = ['manual', 'auto'];
 
 /**
+ * The mode a row mounts with: its own `mode` config when that names a legal mode, else `auto` for an
+ * auto row and `manual` otherwise.
+ *
+ * The Config field exists so `settings.update` can flip the mode without remounting the row, and it
+ * was also meant to be the way a row *starts* in manual. It was not: `apply()` hardcoded `'auto'`
+ * here and never read `cfg.mode`, so `mode: manual` in a row config silently did nothing and auto
+ * routing ran regardless.
+ */
+export function mountMode(cfg, spec) {
+  const mode = cfg !== undefined && cfg !== null ? cfg.mode : undefined;
+  if (MODES.includes(mode)) return mode;
+  return spec === 'auto' ? 'auto' : 'manual';
+}
+
+/**
  * Config schema. `mode` is volatile so `settings.update` can flip it without remounting the row
  * (same pattern as dsh-agent-default-model's provider/model). Everything else is the row's ordinary
  * config -- undeclared fields would be stripped once a schema exists, so all of them stay here.
@@ -815,7 +830,8 @@ export function apply(ctx, config) {
    * commit, so this is a live value; until the registration lands (or in a composition with no
    * settings plane) it stays at the mount-time mode, which is the pre-switch behaviour.
    */
-  const modeSink = { mode: auto ? 'auto' : 'manual' };
+  const mountAt = mountMode(cfg, spec);
+  const modeSink = { mode: mountAt };
   /** True when the user switched to manual: leave the request on the config its own owner chose. */
   const isManual = () => currentMode(ctx, modeSink.mode) === 'manual';
 
@@ -833,8 +849,8 @@ export function apply(ctx, config) {
       .catch((e) => { log(`judge service: auto-start skipped (${e.message})`); });
     // The runtime switch. Not awaited either: registering it must not delay the row, and the read
     // path already falls back to `modeFallback` until the registration lands.
-    installModeSetting(ctx, 'auto', modeSink).then((settings) => {
-      if (settings !== null) log(`mode switch ready (${MODE_NS}.mode, default auto)`);
+    installModeSetting(ctx, mountAt, modeSink).then((settings) => {
+      if (settings !== null) log(`mode switch ready (${MODE_NS}.mode, default ${mountAt})`);
     });
     // The chip's side of the same switch: a same-origin route, because a static client bundle has no
     // `host.call` and no `ctx.remote.settings`.

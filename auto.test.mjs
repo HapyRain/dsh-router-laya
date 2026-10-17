@@ -3,7 +3,7 @@
 // Python service. Plain-script check, repo convention (see parseArm.test.mjs).
 //
 //     node routing/plugin/dsh-router-laya/auto.test.mjs
-import { Config, isOurRoute, MODE_NS, nextSessionState, resolveModeEntryId, resolveSchedule,
+import { Config, isOurRoute, MODE_NS, mountMode, nextSessionState, resolveModeEntryId, resolveSchedule,
   serviceBaseUrl, serviceLaunchSpec, TIER_TABLE } from './index.js';
 import { isVolatile } from '@deepseek-ai/cosmokit';
 
@@ -153,6 +153,13 @@ check('Config.auto is not volatile', Config.dict.auto.meta.volatile === undefine
 check('Config keeps ordinary row fields',
   ['auto', 'judge', 'routes', 'tiers', 'global', 'servicePython', 'serviceScript', 'autoStart']
     .every((key) => Object.hasOwn(Config.dict, key)), true);
+
+// ── the mode a row mounts with (`mode: manual` used to be read by nothing at all) ──────────────
+check('mount mode: row asks for manual', mountMode({ mode: 'manual', auto: true }, 'auto'), 'manual');
+check('mount mode: row asks for auto', mountMode({ mode: 'auto' }, 'auto'), 'auto');
+check('mount mode: unset on an auto row starts auto', mountMode({ auto: true }, 'auto'), 'auto');
+check('mount mode: unset on a judge row starts manual', mountMode({ judge: true }, 'judge'), 'manual');
+check('mount mode: junk value falls back to the arm', mountMode({ mode: 'AUTO' }, 'auto'), 'auto');
 
 // ── report ───────────────────────────────────────────────────────────────────────────────────
 console.log('='.repeat(70));
