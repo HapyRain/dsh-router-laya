@@ -340,9 +340,13 @@ function installModeRoute(ctx, sink) {
  *     answers. `fail-safe` is unchanged.
  *   - Never fatal. A missing python, a missing script, a dead spawn: log a line and return. The
  *     session must not learn that the judge is unhappy.
- *   - Idempotent, and duplicated starts are already safe: `laya_router.py` binds 127.0.0.1:8765, so a
- *     second process dies on EADDRINUSE and exits. Two DSH instances therefore cannot both own it --
- *     the loser exits rather than fighting for the port.
+ *   - Idempotent, and duplicated starts are safe: `laya_router.py` claims 127.0.0.1:8765 through
+ *     `service/http_guards.py` -- which drops SO_REUSEADDR on Windows -- and it claims the port
+ *     *before* loading the checkpoint, so a second process loses inside bind() in about a second
+ *     instead of after paying the load. Two DSH instances therefore cannot both own it.
+ *     Issue #2: until 2.2.1 that held only off Windows. `http.server.HTTPServer` sets SO_REUSEADDR,
+ *     which on Windows lets several sockets listen on one port, so every remount that missed the
+ *     health probe below leaked a judge holding its own ~2.9 GB copy of the checkpoint.
  *   - Detached, stdio ignored: the judge must outlive nothing in particular and must not hold a pipe
  *     to the harness. It is a plain background process, killed the way any other one is.
  *

@@ -187,9 +187,12 @@ def http_serve(port=8765):
       LAYA_MODEL 是本地目录 → 微调协议（7 noul 含 Q7 + 意图解析 + 规则引擎含规则0 + C3 升级 → tier）
       LAYA_MODEL 是仓库 id   → 基座协议（4分类 difficulty + domain 等）
     """
-    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from http.server import BaseHTTPRequestHandler
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    # Dependency-free guards, kept in their own file so http_guards.test.py can pin them without the
+    # torch import this module pulls in through `laya`.
+    from http_guards import ExclusiveHTTPServer, is_allowed_origin
 
     model_path = os.environ.get(
         "LAYA_MODEL",
@@ -202,19 +205,8 @@ def http_serve(port=8765):
     )
     is_finetuned = os.path.isdir(model_path)
 
-    if is_finetuned:
-        from finetuned_judge import load as ft_load, judge as ft_judge
-        agent = ft_load(model_path, device=os.environ.get("LAYA_DEVICE"))
-        protocol = "finetuned"
-        print("Laya router loaded [微调协议], HTTP on :%d" % port, file=sys.stderr, flush=True)
-        print("  model: %s" % model_path, file=sys.stderr, flush=True)
-    else:
-        agent = laya.load(model_path,
-                         device=os.environ.get("LAYA_DEVICE"),
-                         subfolder=os.environ.get("LAYA_SUBFOLDER"))
-        protocol = "base"
-        print("Laya router loaded [基座协议], HTTP on :%d" % port, file=sys.stderr, flush=True)
-        print("  model: %s" % model_path, file=sys.stderr, flush=True)
+    # `protocol`, `agent` and `ft_judge` are bound below, after the port is claimed. The handler only
+    # reads them once `serve_forever()` runs, so defining it before them costs nothing.
 
     # Per-session judgment log for the frontend tier chip (plugin v2 frontend, GET /state).
     # session_id -> deque of the last 20 judgments {ts, tier, triggered_by, regenerate, ms, task}.
@@ -222,16 +214,18 @@ def http_serve(port=8765):
 
     class Handler(BaseHTTPRequestHandler):
         def _cors(self):
-            """Allow the DSH web page to read this service from another port.
+            """Allow the DSH page to read this service from another origin.
 
-            The tier chip runs in the browser on :3080 and polls GET /state here on :8765. A different
-            port is a different origin, so without these headers the browser blocks the response and the
+            The tier chip polls GET /state here from the web profile's page (:3080) and from the
+            desktop shell, which serves the GUI from `dsh-app://app` instead of a port. Either way it
+            is a different origin, so without these headers the browser discards the response and the
             chip can never see a judgment -- spec §2's "前端只管读" is not reachable without them.
-            Restricted to loopback origins: this service holds task text, so a wildcard would let any
-            page in the user's browser read their prompts.
+            The origin list is a prefix allowlist, not a wildcard: this service holds task text, so a
+            wildcard would let any page in the user's browser read their prompts. Issue #3 was the
+            desktop scheme missing from it.
             """
             origin = self.headers.get("Origin")
-            if origin and (origin.startswith("http://127.0.0.1:") or origin.startswith("http://localhost:")):
+            if is_allowed_origin(origin):
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
 
@@ -301,10 +295,37 @@ def http_serve(port=8765):
         def log_message(self, fmt, *args):
             pass  # quiet
 
-    server = HTTPServer(("127.0.0.1", port), Handler)
+    # Claim the port before loading the checkpoint. The port is the one-instance guard, so a duplicate
+    # start must lose it inside bind() -- not after paying the ~70 s load and the ~2.9 GB it holds
+    # (issue #2: eleven Windows judges each kept a full model, because SO_REUSEADDR let every one of
+    # them own 127.0.0.1:8765 at the same time).
+    try:
+        server = ExclusiveHTTPServer(("127.0.0.1", port), Handler)
+    except OSError as e:
+        print("port %d is already owned by another judge service (%s)" % (port, e),
+              file=sys.stderr, flush=True)
+        print("  stop that process (netstat -ano | findstr :%d) or point LAYA_ROUTER_URL at it" % port,
+              file=sys.stderr, flush=True)
+        return 1
+
+    if is_finetuned:
+        from finetuned_judge import load as ft_load, judge as ft_judge
+        agent = ft_load(model_path, device=os.environ.get("LAYA_DEVICE"))
+        protocol = "finetuned"
+        print("Laya router loaded [微调协议], HTTP on :%d" % port, file=sys.stderr, flush=True)
+        print("  model: %s" % model_path, file=sys.stderr, flush=True)
+    else:
+        agent = laya.load(model_path,
+                         device=os.environ.get("LAYA_DEVICE"),
+                         subfolder=os.environ.get("LAYA_SUBFOLDER"))
+        protocol = "base"
+        print("Laya router loaded [基座协议], HTTP on :%d" % port, file=sys.stderr, flush=True)
+        print("  model: %s" % model_path, file=sys.stderr, flush=True)
+
     print("Ready. POST http://127.0.0.1:%d/judge  GET /health" % port,
           file=sys.stderr, flush=True)
     server.serve_forever()
+    return 0
 
 
 if __name__ == "__main__":
@@ -315,6 +336,6 @@ if __name__ == "__main__":
         for i, a in enumerate(sys.argv):
             if a == "--port" and i + 1 < len(sys.argv):
                 port = int(sys.argv[i + 1])
-        http_serve(port)
+        sys.exit(http_serve(port))
     else:
         serve()

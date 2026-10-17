@@ -23,6 +23,8 @@ jobs:
           node auto.test.mjs
       - name: fetch.mjs dry-run (release-first source chain)
         run: node weights/fetch.mjs --dry-run
+      - name: python http guards (port exclusivity + origin allowlist, issues #2/#3)
+        run: python service/http_guards.test.py
       - name: python syntax (vendored service)
         run: python -m compileall -q service
       - name: charts reproducible
