@@ -453,19 +453,123 @@ export function routeForLevel(level, table = ROUTE_TABLE) {
   return table[key] || table.fallback;
 }
 
+
+/**
+ * Whether a route leaves the model alone and only moves the effort.
+ *
+ * A tier row may name no `provider`/`model` at all; that form inherits whatever model the request
+ * already points at. Spelled once here
+ * because five call sites have to agree on it -- a row that says `provider` but no `model` is a typo,
+ * and treating it as "inherit" is the only reading that cannot silently re-point the model.
+ */
+export function inheritsModel(route) {
+  return route !== undefined && route !== null
+    && route.provider === undefined && route.model === undefined;
+}
+
 /**
  * Apply one route to a request config.
  *
- * `maxTokens` is dropped: it reaches this seam already defaulted by the *previous* route's adapter
- * (flagged as an adapter default in the request header), so keeping it would pin one adapter's cap
- * onto another model.
+ * `maxTokens` is dropped only when the route re-points the model: it reaches this seam already
+ * defaulted by the *previous* route's adapter (flagged as an adapter default in the request header),
+ * so keeping it would pin one adapter's cap onto another model. A route that inherits the model
+ * keeps the cap, because the cap belongs to that same model.
+ *
+ * Omitting `provider`/`model` is how a row says "move the effort, leave the model alone": rewriting
+ * the tier must not rewrite the model.
  */
 export function applyRoute(config, route) {
-  const out = { ...config, provider: route.provider, model: route.model };
-  delete out.maxTokens;
+  const inheriting = inheritsModel(route);
+  const out = inheriting ? { ...config } : { ...config, provider: route.provider, model: route.model };
+  if (!inheriting) delete out.maxTokens;
   if (route.effort === undefined) delete out.reasoningEffort;
   else out.reasoningEffort = route.effort;
   return out;
+}
+
+/**
+ * Effort levels ordered weakest to strongest, as spelled across DSH adapters.
+ *
+ * Only a ruler for `clampEffort`; this file still owns no effort vocabulary of its own (see
+ * `parseArm`) and does not export one.
+ */
+const EFFORT_LADDER = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * Align a wanted effort with the levels a model declares.
+ *
+ * Required, not cosmetic: `llm.resolveCallWithInfo` rejects an unsupported explicit effort before
+ * any provider I/O (`UNSUPPORTED_REASONING_EFFORT`), with no clamping and no aliasing. Declared
+ * vocabularies differ per model (some models declare a single level such as `high` only), so an
+ * inheriting row that passed the judged tier straight through would fail the step on those models.
+ *
+ * Rule: keep the wanted level when it is declared; otherwise take the nearest ladder neighbour,
+ * ties going to the *stronger* level -- a few extra reasoning tokens cost little, an under-thought
+ * answer costs more. A word this file does not know is the adapter's, so it passes through untouched.
+ */
+export function clampEffort(wanted, supported) {
+  if (!Array.isArray(supported) || supported.length === 0) return undefined;
+  if (supported.includes(wanted)) return wanted;
+  const target = EFFORT_LADDER.indexOf(wanted);
+  if (target === -1) return wanted;
+  let best;
+  let bestDistance;
+  for (const candidate of supported) {
+    const index = EFFORT_LADDER.indexOf(candidate);
+    if (index === -1) continue;
+    const distance = Math.abs(index - target);
+    // Same distance means the two live on opposite sides of the target; the stronger one wins.
+    if (bestDistance === undefined || distance < bestDistance
+      || (distance === bestDistance && index > EFFORT_LADDER.indexOf(best))) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  // Every declared level is a word this ladder does not know: return a declared one rather than the
+  // wanted one, because only the declared set is guaranteed to survive the adapter.
+  return best === undefined ? supported[0] : best;
+}
+
+/**
+ * The effort ids a provider/model declares, read from the live registry.
+ *
+ * Three outcomes the caller must tell apart: `null` means "could not find out" (no llm service, an
+ * adapter that refuses to describe the model, any throw) and must leave the request alone; `[]` means
+ * the model has no reasoning control at all, so any effort must be dropped; a non-empty list is the
+ * vocabulary to clamp against.
+ */
+export async function supportedEffortIds(ctx, provider, model) {
+  try {
+    const llm = ctx.get('llm');
+    if (llm === undefined || llm === null || typeof llm.resolveModelInfo !== 'function') return null;
+    const info = await llm.resolveModelInfo(provider, model);
+    const reasoning = info === undefined || info === null ? undefined : info.reasoning;
+    if (reasoning === undefined || reasoning === null) return [];
+    if (!Array.isArray(reasoning.efforts)) return null;
+    return reasoning.efforts
+      .map((effort) => (effort === undefined || effort === null ? undefined : effort.id))
+      .filter((id) => typeof id === 'string' && id.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Point one inheriting route at the model this request is already using.
+ *
+ * Only touches routes that carry no `provider`/`model` of their own: an explicit table row keeps the
+ * 2.2.1 semantics byte for byte, so the inheriting form can be adopted one row at a time and rolled
+ * back by putting the model back.
+ */
+export async function clampRouteToModel(ctx, config, route) {
+  if (route === undefined || route === null) return route;
+  if (!inheritsModel(route)) return route;
+  if (route.effort === undefined) return route;
+  if (config === undefined || config === null) return { ...route, effort: undefined };
+  const ids = await supportedEffortIds(ctx, config.provider, config.model);
+  if (ids === null) return route;
+  if (ids.length === 0) return { ...route, effort: undefined };
+  return { ...route, effort: clampEffort(route.effort, ids) };
 }
 
 /**
@@ -483,6 +587,8 @@ export function usableRoute(ctx, route) {
   // null and undefined both mean "no route to apply". A row config that nulls the fallback column
   // (`routes: { fallback: }`) would otherwise reach `applyRoute` as undefined and throw on the step.
   if (route === undefined || route === null) return null;
+  // An inheriting row only moves the effort, so there is no provider to validate.
+  if (inheritsModel(route)) return route;
   const llm = ctx.get('llm');
   if (llm === undefined) return route;
   let providers;
@@ -524,11 +630,19 @@ export function isOurRoute(config, state, tiers = TIER_TABLE) {
   if (state === undefined || state.tier === undefined) return false;
   const ours = tiers[state.tier];
   if (ours === undefined) return false;
-  return config.reasoningEffort === ours.effort && config.model === ours.model;
+  // `state.effort` is what we actually sent (already aligned with the model in force that turn); the
+  // row's nominal effort is only a fallback for state written before it was recorded.
+  const served = state.effort === undefined ? ours.effort : state.effort;
+  if (inheritsModel(ours)) return config.reasoningEffort === served;
+  return config.reasoningEffort === served && config.model === ours.model;
 }
 
 function routeLabel(route) {
-  return `${route.provider}/${route.model} effort=`
+  // Inheriting rows name no model, so say so instead of printing undefined/undefined.
+  const target = inheritsModel(route)
+    ? 'current model'
+    : `${route.provider}/${route.model}`;
+  return `${target} effort=`
     + `${route.effort === undefined ? 'adapter default' : route.effort}`;
 }
 
@@ -934,7 +1048,10 @@ export function apply(ctx, config) {
       const turn = payload && payload.turn;
       const cached = verdicts.get(key);
       if (cached !== undefined && cached.turn === turn) {
-        return cached.route === null ? config : applyRoute(config, cached.route);
+        // Re-align on every step: the cache holds the tier we judged, while the model in force can
+        // change inside one turn (the user picks another one mid-answer, or a fallback kicks in).
+        return cached.route === null ? config
+          : applyRoute(config, await clampRouteToModel(ctx, config, cached.route));
       }
       const task = tasks.get(key);
       const prev = sessionState.get(key);
@@ -957,9 +1074,17 @@ export function apply(ctx, config) {
         route = usableRoute(ctx, tiers[judgment.tier] || tiers.fallback);
         servedTier = judgment.tier;
       }
+      // An inheriting tier must be aligned with the current model's declared levels first: DSH
+      // rejects an unsupported effort before the request leaves (UNSUPPORTED_REASONING_EFFORT).
+      route = await clampRouteToModel(ctx, config, route);
       verdicts.set(key, { turn, route });
       if (task !== undefined) {
-        sessionState.set(key, { tier: servedTier, task: task.text, turn });
+        sessionState.set(key, {
+          tier: servedTier,
+          task: task.text,
+          turn,
+          effort: route === null ? undefined : route.effort,
+        });
       }
       log(`turn ${turn} auto "${task === undefined ? '(no task text captured)' : task.text.slice(0, 60).replace(/\s+/g, ' ')}"`
         + ` -> ${judgment === null ? 'judge unreachable -> fallback' : `${judgment.tier} (${judgment.triggered_by})`} -> `
@@ -973,13 +1098,16 @@ export function apply(ctx, config) {
       // and a tier that moved mid-turn would fight both the KV cache and the tool calls already in
       // flight -- so this is "route each task once", not "route every tool-call round".
       if (cached !== undefined && cached.turn === turn) {
-        return cached.route === null ? config : applyRoute(config, cached.route);
+        return cached.route === null ? config
+          : applyRoute(config, await clampRouteToModel(ctx, config, cached.route));
       }
       const task = tasks.get(key);
       const level = task === undefined
         ? null
         : await judgeDifficulty(ctx, task.text, task.sessionId, payload && payload.signal);
-      const route = usableRoute(ctx, routeForLevel(level, table));
+      // Same alignment as the auto branch: a `routes` table may use inheriting rows too, and an
+      // unsupported effort is rejected by the adapter before the request leaves.
+      const route = await clampRouteToModel(ctx, config, usableRoute(ctx, routeForLevel(level, table)));
       verdicts.set(key, { turn, route });
       log(`turn ${turn} judged "${task === undefined ? '(no task text captured)' : task.text.slice(0, 60).replace(/\s+/g, ' ')}"`
         + ` -> ${level === null ? 'unjudged' : level} -> `

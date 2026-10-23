@@ -3,8 +3,9 @@
 // Python service. Plain-script check, repo convention (see parseArm.test.mjs).
 //
 //     node auto.test.mjs
-import { Config, isOurRoute, MODE_NS, mountMode, nextSessionState, resolveModeEntryId, resolveSchedule,
-  serviceBaseUrl, serviceLaunchSpec, TIER_TABLE } from './index.js';
+import { applyRoute, clampEffort, clampRouteToModel, Config, inheritsModel, isOurRoute, MODE_NS,
+  mountMode, nextSessionState, resolveModeEntryId, resolveSchedule, serviceBaseUrl, serviceLaunchSpec,
+  supportedEffortIds, TIER_TABLE } from './index.js';
 import { isVolatile } from '@deepseek-ai/cosmokit';
 
 let pass = 0;
@@ -162,6 +163,91 @@ check('mount mode: row asks for auto', mountMode({ mode: 'auto' }, 'auto'), 'aut
 check('mount mode: unset on an auto row starts auto', mountMode({ auto: true }, 'auto'), 'auto');
 check('mount mode: unset on a judge row starts manual', mountMode({ judge: true }, 'judge'), 'manual');
 check('mount mode: junk value falls back to the arm', mountMode({ mode: 'AUTO' }, 'auto'), 'auto');
+
+// ── rows that omit the model: a tier change moves the effort, never the model ────────────────
+// A table row may omit provider/model; that is the "inherit the request's model" form. Keeping
+// maxTokens is part of the contract: the cap belongs to the model we are NOT changing.
+check('applyRoute: inheriting row keeps provider, model and cap',
+  applyRoute({ provider: 'p', model: 'm', maxTokens: 4096 }, { effort: 'high' }),
+  { provider: 'p', model: 'm', maxTokens: 4096, reasoningEffort: 'high' });
+check('applyRoute: inheriting row rewrites an existing effort',
+  applyRoute({ provider: 'p', model: 'm', reasoningEffort: 'off' }, { effort: 'low' }),
+  { provider: 'p', model: 'm', reasoningEffort: 'low' });
+check('applyRoute: inheriting row with no effort clears it',
+  applyRoute({ provider: 'p', model: 'm', reasoningEffort: 'high' }, {}),
+  { provider: 'p', model: 'm' });
+check('applyRoute: explicit row still re-points the model and drops the old cap',
+  applyRoute({ provider: 'p', model: 'm', maxTokens: 4096 }, { provider: 'q', model: 'n', effort: 'low' }),
+  { provider: 'q', model: 'n', reasoningEffort: 'low' });
+
+// clampEffort: a declared level wins; otherwise the nearest ladder neighbour; ties go to the
+// stronger level; a word this file does not know belongs to the adapter, so pass it through.
+check('clamp: declared level kept', clampEffort('low', ['low', 'high', 'max']), 'low');
+check('clamp: below range lifts to the only level', clampEffort('low', ['high']), 'high');
+check('clamp: above range drops to the strongest', clampEffort('max', ['low', 'medium', 'high']), 'high');
+check('clamp: equidistant tie goes stronger', clampEffort('medium', ['low', 'high']), 'high');
+check('clamp: unknown level dropped to strongest', clampEffort('xhigh', ['low', 'medium', 'high', 'max']), 'max');
+check('clamp: adapter-owned word passes through', clampEffort('turbo', ['low', 'high']), 'turbo');
+check('clamp: no declared levels -> undefined', clampEffort('high', []), undefined);
+
+// The matrix the README publishes, asserted here so the doc cannot drift from the code: one row per
+// real model shape, columns are the three judged tiers the plugin asks for.
+for (const [label, supported, expected] of [
+  ['low|high|max', ['low', 'high', 'max'], ['low', 'high', 'max']],
+  ['high only', ['high'], ['high', 'high', 'high']],
+  ['medium only', ['medium'], ['medium', 'medium', 'medium']],
+  ['low|medium|high|xhigh', ['low', 'medium', 'high', 'xhigh'], ['low', 'high', 'xhigh']],
+  ['low|high (gaps)', ['low', 'high'], ['low', 'high', 'high']],
+  ['no reasoning control', [], [undefined, undefined, undefined]],
+]) {
+  check(`matrix ${label}: low`, clampEffort('low', supported), expected[0]);
+  check(`matrix ${label}: high`, clampEffort('high', supported), expected[1]);
+  check(`matrix ${label}: max`, clampEffort('max', supported), expected[2]);
+}
+
+// supportedEffortIds: null = "could not find out" (leave the request alone), [] = "no reasoning
+// control on this model" (drop the effort). The two must stay distinguishable.
+const llmCtx = (resolveModelInfo) => ({ get: (name) => (name === 'llm' ? { resolveModelInfo } : undefined) });
+check('efforts: no llm service -> null', await supportedEffortIds({ get: () => undefined }, 'p', 'm'), null);
+check('efforts: model without reasoning -> []', await supportedEffortIds(llmCtx(async () => ({})), 'p', 'm'), []);
+check('efforts: ids extracted in declared order',
+  await supportedEffortIds(llmCtx(async () => ({ reasoning: { efforts: [{ id: 'low' }, { id: 'high' }] } })), 'p', 'm'),
+  ['low', 'high']);
+check('efforts: lookup throws -> null',
+  await supportedEffortIds(llmCtx(async () => { throw new Error('adapter down'); }), 'p', 'm'), null);
+
+// clampRouteToModel: only inheriting rows are touched.
+const twoLevels = llmCtx(async () => ({ reasoning: { efforts: [{ id: 'low' }, { id: 'high' }] } }));
+const request = { provider: 'p', model: 'm' };
+check('clampRoute: inheriting row aligned to the current model',
+  await clampRouteToModel(twoLevels, request, { effort: 'max' }), { effort: 'high' });
+check('clampRoute: explicit row untouched',
+  await clampRouteToModel(twoLevels, request, { provider: 'q', model: 'n', effort: 'max' }),
+  { provider: 'q', model: 'n', effort: 'max' });
+check('clampRoute: no effort -> untouched',
+  await clampRouteToModel(twoLevels, request, {}), {});
+check('clampRoute: model without reasoning control -> effort dropped',
+  await clampRouteToModel(llmCtx(async () => ({})), request, { effort: 'max' }), { effort: undefined });
+check('clampRoute: unknown capability -> untouched',
+  await clampRouteToModel(llmCtx(async () => { throw new Error('x'); }), request, { effort: 'max' }), { effort: 'max' });
+
+// A half-specified row (model but no provider) is a typo, not an inheriting row: it must keep the old
+// loud behaviour instead of quietly turning into "keep whatever model the request already had".
+check('inheritsModel: both fields absent', inheritsModel({ effort: 'low' }), true);
+check('inheritsModel: model only is not inheriting', inheritsModel({ model: 'm', effort: 'low' }), false);
+check('inheritsModel: provider only is not inheriting', inheritsModel({ provider: 'p', effort: 'low' }), false);
+check('inheritsModel: explicit row', inheritsModel({ provider: 'p', model: 'm', effort: 'low' }), false);
+
+// isOurRoute compares against what was actually sent, not the row's nominal effort: a tier that had
+// to be aligned to the model (low -> high on a high-only model) is still our own route, otherwise the
+// next turn would defer to itself and auto would stop routing.
+const inheritedTiers = { low: { effort: 'low' }, fallback: { effort: 'high' } };
+check('isOurRoute: aligned effort still ours',
+  isOurRoute({ reasoningEffort: 'high' }, { tier: 'low', effort: 'high' }, inheritedTiers), true);
+check('isOurRoute: foreign effort is not ours',
+  isOurRoute({ reasoningEffort: 'medium' }, { tier: 'low', effort: 'high' }, inheritedTiers), false);
+check('isOurRoute: falls back to the row effort when the state has none',
+  isOurRoute({ reasoningEffort: 'low' }, { tier: 'low' }, inheritedTiers), true);
 
 // ── report ───────────────────────────────────────────────────────────────────────────────────
 console.log('='.repeat(70));
