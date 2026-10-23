@@ -79,6 +79,60 @@ ROUTEEXP_RESPECT_EXPLICIT=1
 
 失败路径：判定服务不可达 → 落 low，会话不断(概率极低<0.3%)。
 
+## 档位行可以省略模型（只改思考强度，不换模型）
+
+档位表的一行本来是「模型 + 档位」：`TIER_TABLE` 每行都写死了 provider/model，`applyRoute()`
+会把这两个字段一起写进请求。所以开了自动档位之后，你在选择器里手选的模型会被这张表换掉
+（默认四档都指向 `deepseek-official/deepseek-flash`）。
+
+只想让插件决定「想多深」、在哪想由你自己决定时，把模型字段**留空**即可：
+
+```yaml
+config:
+  auto: true
+  tiers:
+    low:      { effort: low }     # 不写 provider/model = 沿用请求当前用的模型
+    high:     { effort: high }
+    max:      { effort: max }
+    fallback: { effort: high }
+```
+
+这样每轮只改写 `reasoningEffort`，`provider` / `model` / `maxTokens` 原样保留 —— 换档不换模型。
+保留模型字段的行行为不变（仍然会换模型），所以可以逐行采用：比如 low/high 跟着当前模型走，
+只把 `max` 钉到一个更强的模型上。
+
+注意上游的行为差异：在旧版本里省略 provider/model 不是「继承」，而是 `usableRoute()` 判定
+「provider 未注册」后**静默不路由**（stderr 一行日志，芯片照样显示档位），或者在没有 `llm`
+服务时把 `undefined` 写进请求。所以省略模型是本版本新增的写法。
+
+### 档位对不上时怎么处理
+
+各模型声明的档位并不统一，而 DSH 对不支持的显式 effort 是**发请求前直接拒**
+（`UNSUPPORTED_REASONING_EFFORT`，不钳制、不做别名），所以判定结果必须先对齐到当前模型的词表：
+
+1. 模型声明了该档位 → 原样下发；
+2. 没声明 → 按 `off < minimal < low < medium < high < xhigh < max` 取最近的一档，
+   **距离相同取更强的一档**（多想只多花几个 token，少想可能直接答错）；
+3. 模型完全不支持推理档位（没有 `reasoning` 元数据）→ 清掉 `effort`，用模型默认值；
+4. 查不到模型能力（没有 `llm` 服务、适配器拒绝描述模型）→ 原样下发，不干预。
+
+实测几种情况（下表每一行都有对应的单测断言 `auto.test.mjs` → `matrix *`，所以它不会随代码漂移）：
+
+| 模型声明的档位 | 判定 low | 判定 high | 判定 max |
+|---|---|---|---|
+| `low / high / max` | `low` | `high` | `max` |
+| 只有 `high` | `high` | `high` | `high` |
+| 只有 `medium` | `medium` | `medium` | `medium` |
+| `low / medium / high / xhigh` | `low` | `high` | `xhigh` |
+| `low / high`（等距取强） | `low` | `high` | `high` |
+| 无 `reasoning` 元数据 | 不下发 effort | 不下发 effort | 不下发 effort |
+
+后几行的含义值得留意：**档位被压扁时，路由就不产生任何差异**——判定还在跑（一次本地推理），
+但 low 和 max 发出去的是同一个档位。这类模型要么在 `tiers` 里显式指定模型，要么就别放进自动档位。
+
+`ROUTEEXP_ARM` 定时档位（`provider/model:effort` 那套实验臂）不受影响：那一层的写法本身就是在
+点名模型，改了就不是同一条实验臂了。
+
 ## 已知边界
 
 - 判定耗时 1–3 秒，计入每轮首字延迟
